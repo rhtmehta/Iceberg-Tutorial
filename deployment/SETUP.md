@@ -423,6 +423,21 @@ Configure the table with:
 | Location | `s3://rmehta-iceberg-tutorial/warehouse/iceberg-tutorial-console-user/` |
 
 Add columns and create the table.
+For columns, you can use the schema json:
+
+```json
+[
+  { "Name": "user_id",    "Type": "bigint",  "Comment": "Unique user identifier" },
+  { "Name": "username",   "Type": "string",  "Comment": "Login username" },
+  { "Name": "email",      "Type": "string",  "Comment": "Email address" },
+  { "Name": "first_name", "Type": "string",  "Comment": "" },
+  { "Name": "last_name",  "Type": "string",  "Comment": "" },
+  { "Name": "phone",      "Type": "string",  "Comment": "" },
+  { "Name": "status",     "Type": "string",  "Comment": "active | inactive | suspended" },
+  { "Name": "created_at", "Type": "timestamp", "Comment": "Partition column" },
+  { "Name": "updated_at", "Type": "timestamp", "Comment": "" }
+]
+```
 
 > **Note:** Glue creates Iceberg V2 tables by default.
 
@@ -442,4 +457,28 @@ The table should now be visible through:
 
 ### Option 2: Create Table Using Spark SQL
 
-This section will be covered in the next step of the tutorial.
+```
+spark.sql("""
+  CREATE TABLE IF NOT EXISTS glue_catalog.rmehta_iceberg.iceberg_tutorial_spark_user (
+    user_id    BIGINT      NOT NULL COMMENT 'Unique user identifier',
+    username   STRING      NOT NULL COMMENT 'Login username',
+    email      STRING      NOT NULL COMMENT 'Email address',
+    first_name STRING               COMMENT '',
+    last_name  STRING               COMMENT '',
+    phone      STRING               COMMENT '',
+    status     STRING      NOT NULL COMMENT 'active | inactive | suspended',
+    created_at TIMESTAMP   NOT NULL COMMENT 'Partition column',
+    updated_at TIMESTAMP   NOT NULL COMMENT ''
+  )
+  USING iceberg
+  PARTITIONED BY (months(created_at))
+  LOCATION 's3://rmehta-iceberg-tutorial/warehouse/rmehta_iceberg/iceberg_tutorial_spark_user'
+  TBLPROPERTIES (
+    'table_type'                                 = 'ICEBERG',
+    'format'                                     = 'parquet',
+    'write.parquet.compression-codec'            = 'snappy',
+    'write.metadata.delete-after-commit.enabled' = 'true',
+    'write.metadata.previous-versions-max'       = '10'
+  )
+""")
+```
