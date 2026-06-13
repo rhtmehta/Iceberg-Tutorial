@@ -26,72 +26,212 @@ This tutorial uses:
 
 ### Step 1: Create IAM Policy
 
-Navigate to **AWS Console → IAM → Policies → Create Policy** and create a policy with:
+Create a file named `iceberg-tutorial-policy.json` with the following content:
 
-- S3 Full Access
-- Glue Full Access
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3IcebergAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": [
+        "arn:aws:s3:::rmehta-iceberg-tutorial",
+        "arn:aws:s3:::rmehta-iceberg-tutorial/*"
+      ]
+    },
+    {
+      "Sid": "GlueIcebergAccess",
+      "Effect": "Allow",
+      "Action": [
+        "glue:CreateDatabase",
+        "glue:DeleteDatabase",
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:UpdateDatabase",
+        "glue:CreateTable",
+        "glue:DeleteTable",
+        "glue:UpdateTable",
+        "glue:GetTable",
+        "glue:GetTables"
+      ],
+      "Resource": [
+        "arn:aws:glue:*:*:catalog",
+        "arn:aws:glue:*:*:database/iceberg_tutorial",
+        "arn:aws:glue:*:*:table/iceberg_tutorial/*"
+      ]
+    }
+  ]
+}
+```
 
 > [!CAUTION]
-> Never grant broad permissions like this in production.
+> Never grant broad permissions like this in production. Scope the `Resource` ARNs to your specific region and account ID.
+
+Then create the policy:
+
+```bash
+aws iam create-policy \
+  --policy-name iceberg-tutorial-policy \
+  --policy-document file://iceberg-tutorial-policy.json \
+  --description "Policy for Apache Iceberg tutorial — S3 and Glue access"
+```
+
+Save the `Policy.Arn` from the output — you will need it in the next step.
 
 ---
 
 ### Step 2: Create IAM Group
 
-Navigate to **IAM → User Groups → Create Group** and attach the policy created above.
+```bash
+aws iam create-group \
+  --group-name iceberg-tutorial-group
+```
+
+Attach the policy to the group (replace `<ACCOUNT_ID>` with your AWS account ID):
+
+```bash
+aws iam attach-group-policy \
+  --group-name iceberg-tutorial-group \
+  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/iceberg-tutorial-policy
+```
 
 ---
 
 ### Step 3: Create IAM User
 
-Navigate to **IAM → Users → Create User** and attach the user to the group created above.
+```bash
+aws iam create-user \
+  --user-name iceberg-tutorial-user
+```
+
+Add the user to the group:
+
+```bash
+aws iam add-user-to-group \
+  --user-name iceberg-tutorial-user \
+  --group-name iceberg-tutorial-group
+```
 
 ---
 
 ### Step 4: Create Access Keys
 
-Navigate to **IAM User → Security Credentials → Create Access Key → Command Line Interface (CLI)** and save:
+```bash
+aws iam create-access-key \
+  --user-name iceberg-tutorial-user
+```
 
-- Access Key
-- Secret Access Key
+The response contains both `AccessKeyId` and `SecretAccessKey`. Save them immediately — the secret is shown only once.
 
 > [!CAUTION]
 > Do not commit these values to Git or share them with anyone.
+
+Configure your local CLI with these credentials:
+
+```bash
+aws configure --profile iceberg-tutorial
+# AWS Access Key ID: <AccessKeyId from above>
+# AWS Secret Access Key: <SecretAccessKey from above>
+# Default region name: us-east-1
+# Default output format: json
+```
 
 ---
 
 ### Step 5: Create Glue IAM Role
 
-Navigate to **IAM → Roles → Create Role** and select:
+Create a trust policy file named `glue-trust-policy.json`:
 
-- **Trusted Entity Type:** AWS Service
-- **Use Case:** Glue
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "glue.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
 
-Name the role (e.g., `iceberg-tutorial-glue-role`) and save the role name for later.
+Create the role:
+
+```bash
+aws iam create-role \
+  --role-name iceberg-tutorial-glue-role \
+  --assume-role-policy-document file://glue-trust-policy.json \
+  --description "Glue service role for Iceberg tutorial"
+```
+
+Attach the tutorial policy to the role (replace `<ACCOUNT_ID>`):
+
+```bash
+aws iam attach-role-policy \
+  --role-name iceberg-tutorial-glue-role \
+  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/iceberg-tutorial-policy
+```
+
+Also attach the AWS managed Glue service role policy:
+
+```bash
+aws iam attach-role-policy \
+  --role-name iceberg-tutorial-glue-role \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+```
 
 ---
 
 ## S3 Setup
 
-Navigate to **AWS Console → S3 → Create Bucket**.
+Create the S3 bucket (replace `us-east-1` with your preferred region):
 
-Example bucket name:
-```
-rmehta-iceberg-tutorial
+```bash
+aws s3api create-bucket \
+  --bucket rmehta-iceberg-tutorial \
+  --region us-east-1
 ```
 
-Use all recommended default settings and copy the bucket name — it will be required later.
+> **Note:** For regions other than `us-east-1`, add `--create-bucket-configuration LocationConstraint=<region>`.
+
+Verify the bucket was created:
+
+```bash
+aws s3 ls | grep rmehta-iceberg-tutorial
+```
 
 ---
 
 ## AWS Glue Setup
 
-Navigate to **AWS Console → Glue → Databases → Add Database** and create a database with:
+Create the Glue database with the S3 warehouse location:
 
-| Field | Value |
-|-------|-------|
-| Database Name | `iceberg_tutorial` |
-| Location | `s3://rmehta-iceberg-tutorial/warehouse` |
+```bash
+aws glue create-database \
+  --database-input '{
+    "Name": "iceberg_tutorial",
+    "LocationUri": "s3://rmehta-iceberg-tutorial/warehouse",
+    "Description": "Iceberg tutorial database"
+  }'
+```
+
+Verify the database was created:
+
+```bash
+aws glue get-database --name iceberg_tutorial
+```
 
 ---
 
@@ -407,57 +547,73 @@ There are two ways to create Iceberg tables.
 
 ---
 
-### Option 1: AWS Console
+### Option 1: AWS CLI
 
-Navigate to **Glue → Tables → Create Table** and choose **Apache Iceberg**.
-
-Configure the table with:
-
-| Field | Value |
-|-------|-------|
-| Database | `iceberg_tutorial` |
-| Compaction | ✔ Enabled |
-| Snapshot Retention | ✔ Enabled |
-| Orphan File Deletion | ✔ Enabled |
-| IAM Role | `iceberg-tutorial-glue-role` |
-| Location | `s3://rmehta-iceberg-tutorial/warehouse/iceberg-tutorial-console-user/` |
-
-Add columns and create the table.
-For columns, you can use the schema json:
+Create a file named `iceberg-console-user-table.json`:
 
 ```json
-[
-  { "Name": "user_id",    "Type": "bigint",  "Comment": "Unique user identifier" },
-  { "Name": "username",   "Type": "string",  "Comment": "Login username" },
-  { "Name": "email",      "Type": "string",  "Comment": "Email address" },
-  { "Name": "first_name", "Type": "string",  "Comment": "" },
-  { "Name": "last_name",  "Type": "string",  "Comment": "" },
-  { "Name": "phone",      "Type": "string",  "Comment": "" },
-  { "Name": "status",     "Type": "string",  "Comment": "active | inactive | suspended" },
-  { "Name": "created_at", "Type": "timestamp", "Comment": "Partition column" },
-  { "Name": "updated_at", "Type": "timestamp", "Comment": "" }
-]
+{
+  "Name": "iceberg_tutorial_console_user",
+  "StorageDescriptor": {
+    "Columns": [
+      { "Name": "user_id",    "Type": "bigint",    "Comment": "Unique user identifier" },
+      { "Name": "username",   "Type": "string",    "Comment": "Login username" },
+      { "Name": "email",      "Type": "string",    "Comment": "Email address" },
+      { "Name": "first_name", "Type": "string",    "Comment": "" },
+      { "Name": "last_name",  "Type": "string",    "Comment": "" },
+      { "Name": "phone",      "Type": "string",    "Comment": "" },
+      { "Name": "status",     "Type": "string",    "Comment": "active | inactive | suspended" },
+      { "Name": "created_at", "Type": "timestamp", "Comment": "Partition column" },
+      { "Name": "updated_at", "Type": "timestamp", "Comment": "" }
+    ],
+    "Location": "s3://rmehta-iceberg-tutorial/warehouse/iceberg-tutorial-console-user/",
+    "InputFormat":  "org.apache.hadoop.mapred.FileInputFormat",
+    "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+    "SerdeInfo": {
+      "SerializationLibrary": "org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe"
+    }
+  },
+  "PartitionKeys": [],
+  "TableType": "EXTERNAL_TABLE",
+  "Parameters": {
+    "table_type":               "ICEBERG",
+    "metadata_location":        "s3://rmehta-iceberg-tutorial/warehouse/iceberg-tutorial-console-user/",
+    "compaction_enabled":       "true",
+    "snapshot_retention":       "true",
+    "orphan_file_deletion":     "true"
+  }
+}
+```
+
+Create the table:
+
+```bash
+aws glue create-table \
+  --database-name iceberg_tutorial \
+  --table-input file://iceberg-console-user-table.json
 ```
 
 > **Note:** Glue creates Iceberg V2 tables by default.
 
-Verify using:
+Verify the table was created:
 
-```sql
-SHOW TABLES;
+```bash
+aws glue get-table \
+  --database-name iceberg_tutorial \
+  --name iceberg_tutorial_console_user
 ```
 
-The table should now be visible through:
+The table should now be accessible via:
 
-- AWS Console
 - AWS CLI
+- AWS Console
 - Spark SQL
 
 ---
 
 ### Option 2: Create Table Using Spark SQL
 
-```
+```python
 spark.sql("""
   CREATE TABLE IF NOT EXISTS glue_catalog.rmehta_iceberg.iceberg_tutorial_spark_user (
     user_id    BIGINT      NOT NULL COMMENT 'Unique user identifier',
