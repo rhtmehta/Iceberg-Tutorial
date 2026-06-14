@@ -42,7 +42,11 @@ Create a file named `iceberg-tutorial-policy.json` with the following content:
         "s3:ListBucket",
         "s3:GetBucketLocation",
         "s3:AbortMultipartUpload",
-        "s3:ListMultipartUploadParts"
+        "s3:ListMultipartUploadParts",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:GetBucketPublicAccessBlock"
       ],
       "Resource": [
         "arn:aws:s3:::rmehta-iceberg-tutorial",
@@ -60,9 +64,18 @@ Create a file named `iceberg-tutorial-policy.json` with the following content:
         "glue:UpdateDatabase",
         "glue:CreateTable",
         "glue:DeleteTable",
+        "glue:BatchDeleteTable",
         "glue:UpdateTable",
         "glue:GetTable",
-        "glue:GetTables"
+        "glue:GetTables",
+        "glue:BatchCreatePartition",
+        "glue:CreatePartition",
+        "glue:DeletePartition",
+        "glue:BatchDeletePartition",
+        "glue:UpdatePartition",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:BatchGetPartition"
       ],
       "Resource": [
         "arn:aws:glue:*:*:catalog",
@@ -205,6 +218,88 @@ aws s3api create-bucket \
 ```
 
 > **Note:** For regions other than `us-east-1`, add `--create-bucket-configuration LocationConstraint=<region>`.
+
+---
+
+### Block Public Access
+
+New buckets do not have public access blocked by default via the CLI. Set all four block public access flags explicitly:
+
+```bash
+aws s3api put-public-access-block \
+  --bucket rmehta-iceberg-tutorial \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+```
+
+Verify:
+
+```bash
+aws s3api get-public-access-block \
+  --bucket rmehta-iceberg-tutorial
+```
+
+Expected output:
+
+```json
+{
+    "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "IgnorePublicAcls": true,
+        "BlockPublicPolicy": true,
+        "RestrictPublicBuckets": true
+    }
+}
+```
+
+---
+
+### Enable Default Encryption
+
+Enable server-side encryption with SSE-S3 (AES-256) so all objects written to the bucket are encrypted at rest by default:
+
+```bash
+aws s3api put-bucket-encryption \
+  --bucket rmehta-iceberg-tutorial \
+  --server-side-encryption-configuration '{
+    "Rules": [
+      {
+        "ApplyServerSideEncryptionByDefault": {
+          "SSEAlgorithm": "AES256"
+        },
+        "BucketKeyEnabled": true
+      }
+    ]
+  }'
+```
+
+Verify:
+
+```bash
+aws s3api get-bucket-encryption \
+  --bucket rmehta-iceberg-tutorial
+```
+
+Expected output:
+
+```json
+{
+    "ServerSideEncryptionConfiguration": {
+        "Rules": [
+            {
+                "ApplyServerSideEncryptionByDefault": {
+                    "SSEAlgorithm": "AES256"
+                },
+                "BucketKeyEnabled": true
+            }
+        ]
+    }
+}
+```
+
+> **Note:** SSE-S3 (AES-256) is sufficient for this tutorial. For production, consider SSE-KMS with a customer-managed key for tighter access control and audit logging via AWS CloudTrail.
+
+---
 
 Verify the bucket was created:
 
